@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body, html { margin:0; padding:0; overflow:hidden; background:#000; width:100%; height:100%; }
+        canvas { display:block; width:100vw; height:100vh; }
+        #ui { position:absolute; top:10px; left:10px; color:#f00; font-family:monospace; font-size:16px; text-shadow:1px 1px #000; pointer-events:none; }
+    </style>
+</head>
+<body>
+    <div id="ui">FLOOR: <span id="fl">1</span> | WASD=Move | ARROWS=Look | SHIFT=Run | C=Crouch</div>
+    <canvas id="g"></canvas>
+
+<script>
+const canvas = document.getElementById('g');
+const ctx = canvas.getContext('2d');
+
+// Game state
+let px = 2.5, py = 2.5, pa = 0; // Player pos & angle
+let pFloor = 1;
+let size = 32; // Map size
+let map = [];
+let crouch = false;
+let moveSpeed = 0.04;
+const rotSpeed = 0.04;
+
+// Canvas resizing
+function resize() {
+    canvas.width = window.innerWidth / 2; // Low-res for performance & retro vibe
+    canvas.height = window.innerHeight / 2;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// Procedural Maze & Rooms Generation (0=empty, 1=normal wall, 2=low wall, 3=stairs)
+function genMap() {
+    map = Array(size * size).fill(1);
+    // Simple carver
+    let x = 2, y = 2;
+    map[y * size + x] = 0;
+    
+    for (let i = 0; i < 2000; i++) {
+        let dir = Math.floor(Math.random() * 4);
+        let dx = dir === 0 ? 1 : dir === 1 ? -1 : 0;
+        let dy = dir === 2 ? 1 : dir === 3 ? -1 : 0;
+        
+        if (x+dx*2 > 0 && x+dx*2 < size-1 && y+dy*2 > 0 && y+dy*2 < size-1) {
+            map[(y+dy) * size + (x+dx)] = 0;
+            map[(y+dy*2) * size + (x+dx*2)] = 0;
+            x += dx * 2; y += dy * 2;
+        }
+    }
+    
+    // Add random rooms and special blocks
+    for(let i=0; i<10; i++) {
+        let rx = Math.floor(Math.random() * (size - 6)) + 2;
+        let ry = Math.floor(Math.random() * (size - 6)) + 2;
+        for(let h=0; h<4; h++) {
+            for(let w=0; w<4; w++) {
+                map[(ry+h)*size + (rx+w)] = 0;
+            }
+        }
+    }
+    
+    // Inject low walls (type 2) and stairs (type 3)
+    let placedStairs = 0;
+    while(placedStairs < 3) {
+        let sx = Math.floor(Math.random() * (size-2)) + 1;
+        let sy = Math.floor(Math.random() * (size-2)) + 1;
+        if(map[sy*size + sx] === 0) {
+            map[sy*size + sx] = 3;
+            placedStairs++;
+        }
+    }
+    
+    for(let j=0; j<20; j++) {
+        let lx = Math.floor(Math.random() * (size-2)) + 1;
+        let ly = Math.floor(Math.random() * (size-2)) + 1;
+        if(map[ly*size + lx] === 0 && (lx!=2 || ly!=2)) map[ly*size + lx] = 2;
+    }
+    map[2 * size + 2] = 0; // Ensure spawn is empty
+}
+genMap();
+
+// Input handling
+const keys = {};
+window.addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; keys[e.code] = true; });
+window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; keys[e.code] = false; });
+window.focus(); // Instant focus for immediate play
+
+// Procedural Brick Texture Generation
+const texSize = 16;
+const tex = ctx.createImageData(texSize, texSize);
+for (let i = 0; i < tex.data.length; i += 4) {
+    let y = Math.floor((i/4)/texSize);
+    let x = (i/4)%texSize;
+    let brick = (y % 4 === 0 || x % 8 === 0) ? 40 : 110 + Math.random()*30;
+    tex.data[i] = brick;     // R
+    tex.data[i+1] = brick*0.8; // G (brownish dark brick vibe)
+    tex.data[i+2] = brick*0.7; // B
+    tex.data[i+3] = 255;
+}
+
+// Main loop
+function loop() {
+    // Movement configuration
+    crouch = keys['c'];
+    let speed = keys['shift'] ? moveSpeed * 1.8 : (crouch ? moveSpeed * 0.4 : moveSpeed);
+    let ox = 0, oy = 0;
+
+    if (keys['w'] || keys['arrowup']) { ox += Math.cos(pa) * speed; oy += Math.sin(pa) * speed; }
+    if (keys['s'] || keys['arrowdown']) { ox -= Math.cos(pa) * speed; oy -= Math.sin(pa) * speed; }
+    if (keys['a']) { ox += Math.sin(pa) * speed; oy -= Math.cos(pa) * speed; }
+    if (keys['d']) { ox -= Math.sin(pa) * speed; oy += Math.cos(pa) * speed; }
+    if (keys['arrowleft']) pa -= rotSpeed;
+    if (keys['arrowright']) pa += rotSpeed;
+
+    // Collision handling
+    let nx = px + ox, ny = py + oy;
+    let currentCell = map[Math.floor(ny) * size + Math.floor(nx)];
+    
+    // Check if stepped on stairs (Type 3)
+    if (currentCell === 3) {
+        pFloor++;
+        document.getElementById('fl').innerText = pFloor;
+        genMap();
+        px = 2.5; py = 2.5; pa = 0;
+    } else {
+        // Crouch under low wall (type 2), block standard wall (type 1)
+        if (map[Math.floor(py) * size + Math.floor(nx)] === 0 || (map[Math.floor(py) * size + Math.floor(nx)] === 2 && crouch)) px = nx;
+        if (map[Math.floor(ny) * size + Math.floor(px)] === 0 || (map[Math.floor(ny) * size + Math.floor(px)] === 2 && crouch)) py = ny;
+    }
+
+    // Render Setup
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.fillStyle = '#050508'; ctx.fillRect(0, 0, w, h/2); // Ceiling
+    ctx.fillStyle = '#111'; ctx.fillRect(0, h/2, w, h/2); // Floor
+
+    // Raycasting Engine
+    const fov = Math.PI / 3;
+    for (let x = 0; x < w; x++) {
+        let rayAngle = (pa - fov/2) + (x / w) * fov;
+        let distance = 0;
+        let hitWall = false;
+        let wallType = 0;
+        let tx = 0;
+
+        let cos = Math.cos(rayAngle), sin = Math.sin(rayAngle);
+        while (!hitWall && distance < 16) {
+            distance += 0.02;
+            let cx = Math.floor(px + cos * distance);
+            let cy = Math.floor(py + sin * distance);
+            if (cx < 0 || cx >= size || cy < 0 || cy >= size) { hitWall = true; distance = 16; }
+            else if (map[cy * size + cx] > 0) {
+                hitWall = true;
+                wallType = map[cy * size + cx];
+                // Calculate texture offset x
+                let hitX = px + cos * distance;
+                let hitY = py + sin * distance;
+                let blockX = hitX - cx;
+                let blockY = hitY - cy;
+                tx = Math.abs(blockX - 0.5) > Math.abs(blockY - 0.5) ? blockX : blockY;
+                tx = Math.floor(tx * texSize) % texSize;
+            }
+        }
+
+        // Correct fish-eye effect
+        let correctedDist = distance * Math.cos(rayAngle - pa);
+        let wallHeight = Math.min(h, h / correctedDist);
+        
+        // Crouch screen shift adjustment
+        let camOffset = crouch ? h * 0.15 : 0;
+        let y0 = (h - wallHeight) / 2 + camOffset;
+        let y1 = y0 + wallHeight;
+
+        // Custom render sizing for low-clearance crawler walls (Type 2)
+        if(wallType === 2) {
+            let half = (y1 - y0) * 0.5;
+            y0 += half; 
+        }
+
+        // Flashlight beam vignette physics
+        let screenCenterX = w / 2;
+        let screenCenterY = h / 2;
+        let dx = x - screenCenterX;
+        let lightIntensity = Math.max(0, 1 - (correctedDist / 3.5) - (Math.abs(dx)/w)*1.5);
+        if(wallType === 3) lightIntensity *= 0.5; // Make stair rooms subtly glint brighter
+
+        // Render textured stripe slice
+        for(let y = Math.floor(Math.max(0, y0)); y < Math.min(h, y1); y++) {
+            let ty = Math.floor(((y - y0) / (y1 - y0)) * texSize) % texSize;
+            let texIdx = (ty * texSize + tx) * 4;
+            
+            let r = tex.data[texIdx] * lightIntensity;
+            let g = tex.data[texIdx+1] * lightIntensity;
+            let b = tex.data[texIdx+2] * lightIntensity;
+            
+            // Special color grading for stairs
+            if(wallType === 3) { r *= 0.4; g *= 1.2; b *= 0.5; } 
+
+            ctx.fillStyle = `rgb(${r},${g},${b})`;
+            ctx.fillRect(x, y, 1, 1);
+        }
+    }
+
+    // Flashlight overlay vignette ring
+    let grad = ctx.createRadialGradient(w/2, h/2, w/8, w/2, h/2, w/1.8);
+    grad.addColorStop(0, 'rgba(0,0,0,0)');
+    grad.addColorStop(1, 'rgba(0,0,0,0.95)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+
+    requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
