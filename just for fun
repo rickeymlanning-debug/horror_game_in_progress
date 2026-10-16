@@ -1,0 +1,31 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Sandbox Physics</title><style>
+body{margin:0;background:#111;color:#fff;font-family:sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;overflow:hidden}
+#c{border:2px solid #444;box-shadow:0 0 20px rgba(0,0,0,0.8);background:#000;cursor:crosshair}
+.ui{display:flex;gap:5px;margin-bottom:10px;flex-wrap:wrap;max-width:600px;justify-content:center}
+button{background:#333;color:#fff;border:1px solid #555;padding:6px 10px;font-size:12px;cursor:pointer;border-radius:3px;font-weight:bold}
+button.act{background:#0a84ff;border-color:#0056b3}
+.info{font-size:11px;color:#aaa;margin-top:5px;text-align:center}
+</style></head><body>
+<div class="ui" id="btns"></div>
+<canvas id="c" width="400" height="400"></canvas>
+<div class="info"><b>Click/Drag</b> to spawn. <b>Shift + Click</b> with Rock to set <b>Pivot</b>. Use <b>Left / Right Arrow Keys</b> to rotate structures!</div>
+<script>
+const cv=document.getElementById("c"),ctx=cv.getContext("2d"),W=200,H=200,S=2;
+let grid=new Array(W*H).fill(0),piv={x:100,y:100},cur=1,isDown=false;
+const EL={0:{n:"Air",c:"#000000",t:0},1:{n:"Sand",c:"#e0c068",t:1},2:{n:"Water",c:"#4080ff",t:2},3:{n:"Fire",c:"#ff4500",t:3,l:20},4:{n:"Lava",c:"#ff6600",t:2},5:{n:"Rock",c:"#888888",t:4},6:{n:"Acid",c:"#00ff00",t:2},7:{n:"Plant",c:"#2e8b57",t:4},8:{n:"Gunpowder",c:"#555555",t:1},9:{n:"C4",c:"#cc3333",t:4},10:{n:"Oil",c:"#665544",t:2},11:{n:"Glass",c:"#e0ffff",t:4},12:{n:"Eraser / Cut",c:"#ff00ff",t:5}};
+const btns=document.getElementById("btns");
+Object.keys(EL).forEach(k=>{let b=document.createElement("button");b.textContent=EL[k].n;b.style.borderColor=EL[k].c;b.onclick=()=>{document.querySelectorAll("button").forEach(x=>x.classList.remove("act"));b.classList.add("act");cur=parseInt(k)};if(k==1)b.classList.add("act");btns.appendChild(b)});
+function get(x,y){return (x>=0&&x<W&&y>=0&&y<H)?grid[y*W+x]:0}
+function set(x,y,v){if(x>=0&&x<W&&y>=0&&y<H)grid[y*W+x]=v}
+function draw(){ctx.fillStyle="#000";ctx.fillRect(0,0,cv.width,cv.height);let img=ctx.createImageData(W,H),d=img.data;for(let i=0;i<W*H;i++){let c=EL[grid[i]].c,r=parseInt(c.slice(1,3),16),g=parseInt(c.slice(3,5),16),b=parseInt(c.slice(5,7),16);let idx=i*4;d[idx]=r;d[idx+1]=g;d[idx+2]=b;d[idx+3]=grid[i]?255:0}ctx.putImageData(img,0,0);ctx.strokeStyle="#00ff00";ctx.beginPath();ctx.arc(piv.x,piv.y,4,0,7);ctx.stroke()}
+function act(x,y){if(cur==12){for(let dy=-3;dy<=3;dy++)for(let dx=-3;dx<=3;dx++)if(dx*dx+dy*dy<=9)set(x+dx,y+dy,0);return}set(x,y,cur)}
+function getXY(e){const r=cv.getBoundingClientRect();return {x:Math.floor((e.clientX-r.left)*(W/r.width)),y:Math.floor((e.clientY-r.top)*(H/r.height))}}
+cv.onmousedown=(e)=>{isDown=true;let p=getXY(e);if(e.shiftKey&&cur==5){piv.x=p.x;piv.y=p.y}else act(p.x,p.y)};
+window.onmouseup=()=>{isDown=false};
+cv.onmousemove=(e)=>{if(isDown){let p=getXY(e);act(p.x,p.y)}};
+function explode(cx,cy,r){for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){if(dx*dx+dy*dy<=r*r){let nx=cx+dx,ny=cy+dy;if(Math.random()<0.6)set(nx,ny,Math.random()<0.3?3:0)}}}
+function step(){let next=[...grid];for(let y=H-1;y>=0;y--){for(let x=0;x<W;x++){let i=y*W+x,e=grid[i];if(!e)continue;let t=EL[e].t;if(t==1){if(!get(x,y+1)){next[i]=0;next[(y+1)*W+x]=e}else if(!get(x-1,y+1)){next[i]=0;next[(y+1)*W+x-1]=e}else if(!get(x+1,y+1)){next[i]=0;next[(y+1)*W+x+1]=e}}else if(t==2){if(!get(x,y+1)){next[i]=0;next[(y+1)*W+x]=e}else{let d=Math.random()<0.5?-1:1;if(!get(x+d,y+1)){next[i]=0;next[(y+1)*W+x+d]=e}else if(!get(x-d,y+1)){next[i]=0;next[(y+1)*W+x-d]=e}else if(!get(x+d,y)){next[i]=0;next[y*W+x+d]=e}else if(!get(x-d,y)){next[i]=0;next[y*W+x-d]=e}}}else if(e==3){if(Math.random()<0.15){next[i]=0;continue}let dirs=[[0,1],[0,-1],[1,0],[-1,0]];dirs.forEach(([dx,dy])=>{let ne=get(x+dx,y+dy);if(ne==7||ne==8||ne==10)next[(y+dy)*W+x+dx]=3;if(ne==9){explode(x+dx,y+dy,15)}});let u=Math.random()<0.4?1:0;if(!get(x,y-u)){next[i]=0;next[(y-u)*W+x]=3}}if(e==4){let dirs=[[0,1],[1,0],[-1,0]];dirs.forEach(([dx,dy])=>{let ne=get(x+dx,y+dy);if(ne==2){next[i]=5;next[(y+dy)*W+x+dx]=11}if(ne==7||ne==8||ne==10)next[(y+dy)*W+x+dx]=3;if(ne==9)explode(x+dx,y+dy,15)});}if(e==6){[[0,1],[1,0],[-1,0]].forEach(([dx,dy])=>{let ne=get(x+dx,y+dy);if(ne&&ne!=6&&ne!=11){next[i]=0;next[(y+dy)*W+x+dx]=0}})}if(e==2){[[0,1],[1,0],[-1,0],[0,-1]].forEach(([dx,dy])=>{if(get(x+dx,y+dy)==7&&Math.random()<0.02)next[(y+dy)*W+x+dx]=7})}}}grid=next}
+function rotateWorld(dir){let nG=new Array(W*H).fill(0),rad=dir*0.05,cos=Math.cos(rad),sin=Math.sin(rad);for(let y=0;y<H;y++){for(let x=0;x<W;x++){let e=grid[y*W+x];if(!e)continue;if(e==5||EL[e].t==4||get(x,y+1)==5||get(x,y-1)==5||get(x+1,y)==5||get(x-1,y)==5){let dx=x-piv.x,dy=y-piv.y;let nx=Math.round(piv.x+dx*cos-dy*sin),ny=Math.round(piv.y+dx*sin+dy*cos);if(nx>=0&&nx<W&&ny>=0&&ny<H)nG[ny*W+nx]=e}else{nG[y*W+x]=grid[y*W+x]}}}for(let i=0;i<W*H;i++)if(nG[i])grid[i]=nG[i]}
+window.onkeydown=(e)=>{if(e.key=="ArrowLeft")rotateWorld(-1);if(e.key=="ArrowRight")rotateWorld(1)};
+setInterval(()=>{step();draw()},20);
+</script></body></html>
